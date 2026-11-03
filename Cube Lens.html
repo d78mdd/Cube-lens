@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cube Lens</title>
+<style>
+:root{--bg:#f4f5f8;--fg:#14161c;--card:#fff;--mut:#5d6472;--acc:#2f6bff;--bd:#dfe2ea;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1117;--fg:#eceef4;--card:#1a1d27;--mut:#9aa1b0;--acc:#6b95ff;--bd:#2a2e3b}}
+:root[data-theme="dark"]{--bg:#0f1117;--fg:#eceef4;--card:#1a1d27;--mut:#9aa1b0;--acc:#6b95ff;--bd:#2a2e3b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding:12px}
+h1{font-size:20px;margin:4px 0 2px}
+.sub{color:var(--mut);margin:0 0 10px;font-size:13px}
+.stage{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:3/4;max-height:68vh;margin:0 auto}
+canvas{width:100%;height:100%;display:block;object-fit:cover}
+video{display:none}
+.status{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:4px 9px;border-radius:99px}
+.row{display:flex;gap:8px;margin:10px 0;flex-wrap:wrap}
+button{flex:1;min-width:30%;padding:11px 8px;border-radius:10px;border:1px solid var(--bd);background:var(--card);color:var(--fg);font:inherit;font-weight:600}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-top:10px}
+.card h2{font-size:15px;margin:0 0 6px}
+.card ul{margin:0;padding-left:18px;color:var(--mut)}
+.card li{margin:3px 0}
+b{color:var(--fg)}
+.faces{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;width:96px;margin-top:8px}
+.faces i{aspect-ratio:1;border-radius:4px;border:1px solid var(--bd)}
+</style>
+</head>
+<body>
+<h1>Cube Lens</h1>
+<p class="sub">Point your camera at a Rubik’s Cube, one face toward you.</p>
+<div class="stage"><canvas id="c"></canvas><video id="v" playsinline muted></video><div class="status" id="st">Starting…</div></div>
+<div class="row">
+<button id="bX">X‑ray mechanism</button>
+<button id="bD">Demo cube</button>
+<button id="bF">Flip camera</button>
+<button id="bP">Take photo</button><input type="file" id="fi" accept="image/*" capture="environment" hidden>
+</div>
+<div class="card"><h2>Detected face</h2><div id="info" style="color:var(--mut)">No cube yet.</div><div class="faces" id="faces"></div></div>
+<div class="card"><h2>How it works inside</h2>
+<ul>
+<li><b>Core:</b> a 3‑axis cross that holds everything together.</li>
+<li><b>6 centers:</b> one sticker each, screwed to the core. They never move relative to each other, so they define each face’s color.</li>
+<li><b>12 edges:</b> two stickers, slot between centers and corners.</li>
+<li><b>8 corners:</b> three stickers, locked in by tabs.</li>
+<li><b>Springs and screws</b> under each center set the tension so layers turn smoothly.</li>
+</ul></div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d',{willReadFrequently:true});
+const vid=document.getElementById('v'),st=document.getElementById('st');
+const sm=document.createElement('canvas'),sctx=sm.getContext('2d',{willReadFrequently:true});
+let still=null,xray=false,demo=false,facing='environment',stream=null,box=null,t0=0;
+const COL={W:'#f2f2f2',Y:'#ffd500',R:'#d81f26',O:'#ff7a00',G:'#14a44d',B:'#1a56db'};
+const NAME={W:'White',Y:'Yellow',R:'Red',O:'Orange',G:'Green',B:'Blue'};
+function hsv(r,g,b){r/=255;g/=255;b/=255;const m=Math.max(r,g,b),n=Math.min(r,g,b),d=m-n;let h=0;
+ if(d){if(m===r)h=((g-b)/d)%6;else if(m===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360}
+ return[h,m?d/m:0,m]}
+function cls(r,g,b){const[h,s,v]=hsv(r,g,b);
+ if(s<0.28&&v>0.5)return'W';
+ if(h<14||h>340)return'R';if(h<42)return'O';if(h<75)return'Y';if(h<175)return'G';if(h<265)return'B';return'R'}
+async function start(devId,exact){
+ const had=!!stream;
+ if(stream)stream.getTracks().forEach(t=>t.stop());
+ stream=null;vid.pause();vid.srcObject=null;
+ if(had)await new Promise(r=>setTimeout(r,500));
+ try{
+  const vc=devId?{deviceId:{exact:devId},width:{ideal:960}}:{facingMode:exact?{exact:facing}:{ideal:facing},width:{ideal:960}};
+  stream=await navigator.mediaDevices.getUserMedia({video:vc,audio:false});
+  vid.srcObject=stream;await vid.play();demo=false;bD.classList.remove('on');st.textContent='Looking for a cube…';
+ }catch(e){if(exact)return start();if(devId&&!retried){retried=true;await new Promise(r=>setTimeout(r,600));return start(devId)}
+  if(devId){retried=false;return start()}
+  retried=false;demo=true;bD.classList.add('on');flash('Camera blocked ('+(e.name||'error')+'): use Take photo',8000)}
+}
+function drawDemo(W,H){
+ ctx.fillStyle='#2b2f3a';ctx.fillRect(0,0,W,H);
+ const s=Math.min(W,H)*0.56,x=(W-s)/2+Math.sin(t0/900)*10,y=(H-s)/2;
+ const f=['R','W','G','Y','O','B','G','R','W'];
+ ctx.fillStyle='#050505';ctx.fillRect(x-6,y-6,s+12,s+12);
+ for(let i=0;i<9;i++){const cx=x+(i%3)*s/3,cy=y+Math.floor(i/3)*s/3;ctx.fillStyle=COL[f[i]];
+  ctx.fillRect(cx+5,cy+5,s/3-10,s/3-10)}
+}
+function detect(W,H){
+ const sw=96,sh=Math.round(96*H/W);sm.width=sw;sm.height=sh;sctx.drawImage(cv,0,0,sw,sh);
+ const d=sctx.getImageData(0,0,sw,sh).data,m=new Uint8Array(sw*sh);
+ for(let i=0;i<sw*sh;i++){const[h,s,v]=hsv(d[i*4],d[i*4+1],d[i*4+2]);if(s>0.5&&v>0.3)m[i]=1}
+ const m2=new Uint8Array(sw*sh),R=2;
+ for(let y=0;y<sh;y++)for(let x=0;x<sw;x++)if(m[y*sw+x])for(let dy=-R;dy<=R;dy++)for(let dx=-R;dx<=R;dx++){
+  const xx=x+dx,yy=y+dy;if(xx>=0&&yy>=0&&xx<sw&&yy<sh)m2[yy*sw+xx]=1}
+ const seen=new Uint8Array(sw*sh);let best=null;
+ for(let i=0;i<sw*sh;i++){if(!m2[i]||seen[i])continue;
+  const stk=[i];seen[i]=1;let n=0,x0=sw,y0=sh,x1=0,y1=0;
+  while(stk.length){const p=stk.pop(),px=p%sw,py=(p/sw)|0;n++;
+   if(px<x0)x0=px;if(px>x1)x1=px;if(py<y0)y0=py;if(py>y1)y1=py;
+   for(const q of[p-1,p+1,p-sw,p+sw]){if(q>=0&&q<sw*sh&&m2[q]&&!seen[q]&&Math.abs((q%sw)-px)<2){seen[q]=1;stk.push(q)}}}
+  if(!best||n>best.n)best={n,x0,y0,x1,y1}}
+ if(!best)return null;
+ const w=best.x1-best.x0-2*R,h=best.y1-best.y0-2*R;
+ if(w<sw*0.15||h<sw*0.15||w/h<0.7||w/h>1.45)return null;
+ const k=W/sw,sz=Math.max(w,h)*k,cx=(best.x0+best.x1)/2*k,cy=(best.y0+best.y1)/2*k;
+ return{x:cx-sz/2,y:cy-sz/2,s:sz}
+}
+function rr(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r)}
+function overlay(b,cells){
+ const{x,y,s}=b,c=s/3;
+ if(xray){
+  ctx.fillStyle='rgba(8,10,18,.82)';rr(x-6,y-6,s+12,s+12,12);ctx.fill();
+  // core axes
+  ctx.strokeStyle='#8a93a6';ctx.lineWidth=s*0.05;ctx.lineCap='round';
+  ctx.beginPath();ctx.moveTo(x+c*.5,y+s/2);ctx.lineTo(x+s-c*.5,y+s/2);ctx.moveTo(x+s/2,y+c*.5);ctx.lineTo(x+s/2,y+s-c*.5);ctx.stroke();
+  ctx.strokeStyle='#5f6779';ctx.beginPath();ctx.moveTo(x+s/2-c*.3,y+s/2+c*.3);ctx.lineTo(x+s/2+c*.3,y+s/2-c*.3);ctx.stroke();
+  cells.forEach((k,i)=>{const gx=i%3,gy=(i/3)|0,cx=x+gx*c+c/2,cy=y+gy*c+c/2,t=(gx===1)+(gy===1);
+   ctx.fillStyle=COL[k]||'#888';ctx.globalAlpha=.9;
+   if(t===2){ctx.beginPath();ctx.arc(cx,cy,c*.3,0,7);ctx.fill();ctx.globalAlpha=1;ctx.fillStyle='#222';ctx.beginPath();ctx.arc(cx,cy,c*.1,0,7);ctx.fill();
+    ctx.strokeStyle='#222';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(cx-c*.07,cy);ctx.lineTo(cx+c*.07,cy);ctx.stroke()}
+   else if(t===1){rr(cx-c*.22,cy-c*.3,c*.44,c*.6,6);ctx.fill();}
+   else{rr(cx-c*.3,cy-c*.3,c*.6,c*.6,10);ctx.fill();ctx.globalAlpha=1;ctx.strokeStyle='rgba(0,0,0,.55)';ctx.lineWidth=2;ctx.stroke()}
+   ctx.globalAlpha=1});
+ }else{
+  ctx.lineWidth=Math.max(2,s*.012);
+  cells.forEach((k,i)=>{const gx=i%3,gy=(i/3)|0,t=(gx===1)+(gy===1);
+   ctx.strokeStyle=t===2?'#00e5ff':t===1?'#ffe14d':'#ff5ec8';ctx.strokeRect(x+gx*c+3,y+gy*c+3,c-6,c-6);
+   ctx.fillStyle='rgba(0,0,0,.6)';ctx.font=`600 ${c*.2}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';
+   ctx.fillText((t===2?'CENTER':t===1?'EDGE':'CORNER'),x+gx*c+c/2,y+gy*c+c*.8);
+   ctx.fillStyle='#fff';ctx.fillText((t===2?'CENTER':t===1?'EDGE':'CORNER'),x+gx*c+c/2-1,y+gy*c+c*.8-1)});
+ }
+ // callout
+ ctx.fillStyle='rgba(0,0,0,.65)';const txt=xray?'Core + axes + screws':'3×3 face: 4 corners, 4 edges, 1 center';
+ ctx.font='600 13px system-ui';const tw=ctx.measureText(txt).width+16,ty=Math.max(4,y-30);
+ rr(Math.min(Math.max(4,x),cv.width-tw-4),ty,tw,24,12);ctx.fill();ctx.fillStyle='#fff';ctx.textAlign='left';ctx.fillText(txt,Math.min(Math.max(4,x),cv.width-tw-4)+8,ty+13);
+}
+function frame(t){
+ t0=t;requestAnimationFrame(frame);
+ let W,H;
+ if(still){W=cv.width=480;H=cv.height=640;ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);const k=Math.min(W/still.width,H/still.height),w=still.width*k,h=still.height*k;ctx.drawImage(still,(W-w)/2,(H-h)/2,w,h)}
+ else if(demo){W=cv.width=480;H=cv.height=640;drawDemo(W,H)}
+ else{if(vid.readyState<2)return;const r=vid.videoWidth/vid.videoHeight;W=cv.width=Math.min(640,vid.videoWidth);H=cv.height=Math.round(W/r);
+  ctx.drawImage(vid,0,0,W,H)}
+ const found=detect(W,H);
+ if(found){box=box?{x:box.x+(found.x-box.x)*.35,y:box.y+(found.y-box.y)*.35,s:box.s+(found.s-box.s)*.35}:found;miss=0}
+ else if(box&&++miss>8)box=null;
+ if(!box){setSt('Looking for a cube…');info.textContent='No cube yet.';faces.innerHTML='';return}
+ const cells=[],{x,y,s}=box,c=s/3;
+ for(let i=0;i<9;i++){const px=x+(i%3)*c+c*.3,py=y+((i/3)|0)*c+c*.3,w=Math.max(2,c*.4|0);
+  const px0=Math.max(0,px|0),py0=Math.max(0,py|0);
+  const d=ctx.getImageData(px0,py0,Math.min(w,W-px0)||1,Math.min(w,H-py0)||1).data;let r=0,g=0,b=0,n=d.length/4;
+  for(let j=0;j<d.length;j+=4){r+=d[j];g+=d[j+1];b+=d[j+2]}
+  cells.push(cls(r/n,g/n,b/n))}
+ overlay(box,cells);
+ setSt('Cube detected');
+ const cnt={};cells.forEach(k=>cnt[k]=(cnt[k]||0)+1);
+ info.textContent='Center: '+NAME[cells[4]]+'. Stickers: '+Object.entries(cnt).map(([k,v])=>v+' '+NAME[k].toLowerCase()).join(', ')+'.';
+ faces.innerHTML=cells.map(k=>`<i style="background:${COL[k]}"></i>`).join('');
+}
+let miss=0;const info=document.getElementById('info'),faces=document.getElementById('faces'),bX=document.getElementById('bX'),bD=document.getElementById('bD'),bF=document.getElementById('bF');
+bX.onclick=()=>{xray=!xray;bX.classList.toggle('on',xray)};
+bD.onclick=()=>{still=null;if(demo){start()}else{demo=true;bD.classList.add('on')}};
+let retried=false,noteUntil=0;function flash(t,ms){st.textContent=t;noteUntil=Date.now()+(ms||2500)}
+function setSt(t){if(Date.now()>noteUntil)st.textContent=t}
+bF.onclick=async()=>{still=null;facing=facing==='environment'?'user':'environment';
+ let ds=[];try{ds=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='videoinput')}catch(e){}
+ const tr=stream&&stream.getVideoTracks()[0];const cur=tr?tr.getSettings().deviceId:null;
+ if(ds.length>1){const n=(ds.findIndex(d=>d.deviceId===cur)+1)%ds.length;await start(ds[n].deviceId);flash('Camera '+(n+1)+' of '+ds.length)}
+ else{await start(null,true);const t2=stream&&stream.getVideoTracks()[0];const fm=t2?(t2.getSettings().facingMode||(/front/i.test(t2.label)?'user':/back|rear/i.test(t2.label)?'environment':'')):'';flash(fm?(fm==='user'?'Front camera':'Back camera'):'Switched camera'+(t2&&t2.label?': '+t2.label:''))}};
+const fi=document.getElementById('fi');
+document.getElementById('bP').onclick=()=>fi.click();
+fi.onchange=()=>{const f=fi.files[0];if(!f)return;const im=new Image();im.onload=()=>{still=im;box=null;flash('Photo loaded. Tap Flip camera or Demo to leave it.',4000)};im.src=URL.createObjectURL(f)};
+start();requestAnimationFrame(frame);
+</script>
+</body>
+</html>
